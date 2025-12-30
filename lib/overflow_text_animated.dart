@@ -70,6 +70,12 @@ class _OverflowTextAnimatedState extends State<OverflowTextAnimated> {
   /// [infiniteLoop] - save position of scroll
   double _scrollPosition = 0.0;
 
+  /// Timer for periodic scrolling animation
+  Timer? _scrollTimer;
+
+  /// Flag to stop async operations
+  bool _isDisposed = false;
+
   @override
   void initState() {
     super.initState();
@@ -78,6 +84,9 @@ class _OverflowTextAnimatedState extends State<OverflowTextAnimated> {
     /// initial text
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Check if still mounted before starting animations
+      if (!mounted || _isDisposed) return;
+
       if (_exceeded) {
         /// if text is overflow
         switch (widget.animation) {
@@ -94,15 +103,27 @@ class _OverflowTextAnimatedState extends State<OverflowTextAnimated> {
   Future _handlerScrollOpposite() async {
     /// scroll to end and wait delay
     /// then scroll to top
-    while (true) {
+    while (mounted && !_isDisposed) {
       await Future.delayed(widget.delay);
+
+      // Check mounted after delay
+      if (!mounted || _isDisposed) break;
+
       if (_scrollController.hasClients) {
         await _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
           duration: widget.animateDuration,
           curve: widget.curve,
         );
+
+        // Check mounted after animation
+        if (!mounted || _isDisposed) break;
+
         await Future.delayed(widget.delay);
+
+        // Check mounted after delay
+        if (!mounted || _isDisposed) break;
+
         if (_scrollController.hasClients) {
           await _scrollController.animateTo(
             _scrollController.position.minScrollExtent,
@@ -122,31 +143,45 @@ class _OverflowTextAnimatedState extends State<OverflowTextAnimated> {
     _scrollController.addListener(_scrollListener);
 
     /// Auto scroll with periodic
-    Timer.periodic(widget.animateDuration, (Timer timer) {
+    _scrollTimer = Timer.periodic(widget.animateDuration, (Timer timer) {
+      // Check if disposed before calling _autoScroll
+      if (!mounted || _isDisposed) {
+        timer.cancel();
+        return;
+      }
       _autoScroll();
     });
   }
 
   /// Auto scroll
   void _autoScroll() {
-    setState(() {
-      _scrollPosition += widget.scrollSpace;
-      _scrollController.animateTo(
-        _scrollPosition,
-        duration: widget.animateDuration,
-        curve: Curves.linear,
-      );
-    });
+    if (mounted && !_isDisposed) {
+      setState(() {
+        _scrollPosition += widget.scrollSpace;
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollPosition,
+            duration: widget.animateDuration,
+            curve: Curves.linear,
+          );
+        }
+      });
+    }
   }
 
   /// Function listens for scroll event and checks scroll position
   void _scrollListener() {
+    // Check mounted before accessing controller and calling setState
+    if (!mounted || _isDisposed || !_scrollController.hasClients) return;
+
     if (_scrollController.position.pixels >=
         _scrollController.position.maxScrollExtent) {
-      setState(() {
-        /// If the scroll position is near the end, add new text
-        _text += '$_spaces${widget.text}';
-      });
+      if (mounted && !_isDisposed) {
+        setState(() {
+          /// If the scroll position is near the end, add new text
+          _text += '$_spaces${widget.text}';
+        });
+      }
     }
   }
 
@@ -191,6 +226,16 @@ class _OverflowTextAnimatedState extends State<OverflowTextAnimated> {
 
   @override
   void dispose() {
+    /// Mark as disposed to stop all async operations
+    _isDisposed = true;
+
+    /// Cancel timer if it exists
+    _scrollTimer?.cancel();
+    _scrollTimer = null;
+
+    /// Remove scroll listener
+    _scrollController.removeListener(_scrollListener);
+
     /// dispose controller
     _scrollController.dispose();
     super.dispose();
